@@ -1,0 +1,25 @@
+# train and val data as 1) directory: path/images/, 2) file: path/images.txt, or 3) list: [path1/images/, path2/images/]
+
+######################################### Platform #################################################
+
+#train: /home/jzhang72/PycharmProjects/lidar-segmentation/matlab/platform_scale_2.0_DEM_final_v3/train.txt
+#val: /home/jzhang72/PycharmProjects/lidar-segmentation/matlab/platform_scale_2.0_DEM_final_v3/val.txt
+#test: /home/jzhang72/PycharmProjects/lidar-segmentation/matlab/platform_scale_2.0_DEM_final_v3/test.txt
+#
+## number of classes
+#nc: 1
+#
+## class names
+#names: ['platform' ]
+
+######################################### Annular ##################################################
+
+train: /home/jzhang72/PycharmProjects/lidar-segmentation/matlab/annular_no_scale_final_v3/train.txt
+val: /home/jzhang72/PycharmProjects/lidar-segmentation/matlab/annular_no_scale_final_v3/val.txt
+test: /home/jzhang72/PycharmProjects/lidar-segmentation/matlab/annular_no_scale_final_v3/test.txt
+
+# number of classes
+nc: 1
+
+# class names
+names: ['annular' ]
