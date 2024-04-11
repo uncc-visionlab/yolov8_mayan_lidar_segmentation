@@ -141,6 +141,7 @@ def mask_iou(mask1, mask2, eps=1e-7):
 
     Returns:
         (torch.Tensor): A tensor of shape (N, M) representing masks IoU.
+        every element (i, j) represents IoU of label(i) and prediction(j)
     """
     intersection = torch.matmul(mask1, mask2.T).clamp_(0)
     union = (mask1.sum(1)[:, None] + mask2.sum(1)[None]) - intersection  # (area1 + area2) - intersection
@@ -477,7 +478,8 @@ def ap_per_class(tp,
         # AP from recall-precision curve
         for j in range(tp.shape[1]):
             ap[ci, j], mpre, mrec = compute_ap(recall[:, j], precision[:, j])
-            if plot and j == 0:
+            # if plot and j == 0:
+            if plot and j == 10:    # IoU thresholds have been changed to [0, 0.95] in line 28 in detect/val.py
                 py.append(np.interp(px, mrec, mpre))  # precision at mAP@0.5
 
     # Compute F1 (harmonic mean of precision and recall)
@@ -531,6 +533,7 @@ class Metric(SimpleClass):
         self.f1 = []  # (nc, )
         self.all_ap = []  # (nc, 10)
         self.ap_class_index = []  # (nc, )
+        self.iou = []  # (nc, )
         self.nc = 0
 
     @property
@@ -546,7 +549,8 @@ class Metric(SimpleClass):
     @property
     def ap(self):
         """
-        Returns the Average Precision (AP) at an IoU threshold of 0.5-0.95 for all classes.
+        # Returns the Average Precision (AP) at an IoU threshold of 0.5-0.95 for all classes.
+        Returns the Average Precision (AP) at an IoU threshold of 0.0-0.95 for all classes.
 
         Returns:
             (np.ndarray, list): Array of shape (nc,) with AP50-95 values per class, or an empty list if not available.
@@ -581,7 +585,8 @@ class Metric(SimpleClass):
         Returns:
             (float): The mAP50 at an IoU threshold of 0.5.
         """
-        return self.all_ap[:, 0].mean() if len(self.all_ap) else 0.0
+        # return self.all_ap[:, 0].mean() if len(self.all_ap) else 0.0
+        return self.all_ap[:, 10].mean() if len(self.all_ap) else 0.0   # IoU thresholds have been changed to [0, 0.95] in line 28 in detect/val.py
 
     @property
     def map75(self):
@@ -591,7 +596,8 @@ class Metric(SimpleClass):
         Returns:
             (float): The mAP50 at an IoU threshold of 0.75.
         """
-        return self.all_ap[:, 5].mean() if len(self.all_ap) else 0.0
+        # return self.all_ap[:, 5].mean() if len(self.all_ap) else 0.0
+        return self.all_ap[:, 15].mean() if len(self.all_ap) else 0.0    # IoU thresholds have been changed to [0, 0.95] in line 28 in detect/val.py
 
     @property
     def map(self):
@@ -601,15 +607,20 @@ class Metric(SimpleClass):
         Returns:
             (float): The mAP over IoU thresholds of 0.5 - 0.95 in steps of 0.05.
         """
-        return self.all_ap.mean() if len(self.all_ap) else 0.0
+        # return self.all_ap.mean() if len(self.all_ap) else 0.0
+        return self.all_ap[:, 10:].mean() if len(self.all_ap) else 0.0     # IoU thresholds have been changed to [0, 0.95] in line 28 in detect/val.py
+
+    @property
+    def mIoU(self):
+        return self.iou.mean() if len(self.iou) else 0.0
 
     def mean_results(self):
         """Mean of results, return mp, mr, map50, map."""
-        return [self.mp, self.mr, self.map50, self.map]
+        return [self.mp, self.mr, self.map50, self.map, self.mIoU]
 
     def class_result(self, i):
         """class-aware result, return p[i], r[i], ap50[i], ap[i]."""
-        return self.p[i], self.r[i], self.ap50[i], self.ap[i]
+        return self.p[i], self.r[i], self.ap50[i], self.ap[i], self.iou[i]
 
     @property
     def maps(self):
@@ -622,7 +633,7 @@ class Metric(SimpleClass):
     def fitness(self):
         """Model fitness as a weighted combination of metrics."""
         w = [0.0, 0.0, 0.1, 0.9]  # weights for [P, R, mAP@0.5, mAP@0.5:0.95]
-        return (np.array(self.mean_results()) * w).sum()
+        return (np.array(self.mean_results()[:4]) * w).sum()  # the mean_results now has two more attributes: self.iou
 
     def update(self, results):
         """
@@ -630,6 +641,13 @@ class Metric(SimpleClass):
             results (tuple): A tuple of (p, r, ap, f1, ap_class)
         """
         self.p, self.r, self.f1, self.all_ap, self.ap_class_index = results
+
+    def update_IoU(self, results):
+        # Solution 1: calculate IoU based on precision and recall rates in the entire dataset
+        eps = 1e-16
+        self.iou = self.p * self.r / (self.p + self.r - self.p * self.r + eps)
+        # Solution 2: the results here are an array of the average IoUs for all classes in each batch
+        # self.iou = results
 
 
 class DetMetrics(SimpleClass):
@@ -755,7 +773,7 @@ class SegmentMetrics(SimpleClass):
         self.seg = Metric()
         self.speed = {'preprocess': 0.0, 'inference': 0.0, 'loss': 0.0, 'postprocess': 0.0}
 
-    def process(self, tp_b, tp_m, conf, pred_cls, target_cls):
+    def process(self, tp_b, tp_m, batch_box_iou, batch_mask_iou, conf, pred_cls, target_cls):
         """
         Processes the detection and segmentation metrics over the given set of predictions.
 
@@ -778,6 +796,7 @@ class SegmentMetrics(SimpleClass):
                                     prefix='Mask')[2:]
         self.seg.nc = len(self.names)
         self.seg.update(results_mask)
+        self.seg.update_IoU(batch_mask_iou)
         results_box = ap_per_class(tp_b,
                                    conf,
                                    pred_cls,
@@ -789,13 +808,14 @@ class SegmentMetrics(SimpleClass):
                                    prefix='Box')[2:]
         self.box.nc = len(self.names)
         self.box.update(results_box)
+        self.box.update_IoU(batch_box_iou)
 
     @property
     def keys(self):
         """Returns a list of keys for accessing metrics."""
         return [
-            'metrics/precision(B)', 'metrics/recall(B)', 'metrics/mAP50(B)', 'metrics/mAP50-95(B)',
-            'metrics/precision(M)', 'metrics/recall(M)', 'metrics/mAP50(M)', 'metrics/mAP50-95(M)']
+            'metrics/precision(B)', 'metrics/recall(B)', 'metrics/mAP50(B)', 'metrics/mAP50-95(B)', 'metrics/IoU(B)',
+            'metrics/precision(M)', 'metrics/recall(M)', 'metrics/mAP50(M)', 'metrics/mAP50-95(M)', 'metrics/IoU(M)']
 
     def mean_results(self):
         """Return the mean metrics for bounding box and segmentation results."""

@@ -1,12 +1,15 @@
 # Ultralytics YOLO 🚀, AGPL-3.0 license
-
+import os
+import sys
 from multiprocessing.pool import ThreadPool
 from pathlib import Path
 
+import argparse
 import numpy as np
 import torch
 import torch.nn.functional as F
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../../../'))
 from ultralytics.yolo.utils import DEFAULT_CFG, LOGGER, NUM_THREADS, ops
 from ultralytics.yolo.utils.checks import check_requirements
 from ultralytics.yolo.utils.metrics import SegmentMetrics, box_iou, mask_iou
@@ -16,9 +19,12 @@ from ultralytics.yolo.v8.detect import DetectionValidator
 
 class SegmentationValidator(DetectionValidator):
 
-    def __init__(self, dataloader=None, save_dir=None, pbar=None, args=None, _callbacks=None):
+    def __init__(self, dataloader=None, save_dir=None, pbar=None, args=None, overrides=None, _callbacks=None):
         """Initialize SegmentationValidator and set task to 'segment', metrics to SegmentMetrics."""
-        super().__init__(dataloader, save_dir, pbar, args, _callbacks)
+        if overrides is None:
+            overrides = {}
+        overrides['task'] = 'segment'
+        super().__init__(dataloader, save_dir, pbar, args, overrides, _callbacks)
         self.args.task = 'segment'
         self.metrics = SegmentMetrics(save_dir=self.save_dir, on_plot=self.on_plot)
 
@@ -40,8 +46,29 @@ class SegmentationValidator(DetectionValidator):
 
     def get_desc(self):
         """Return a formatted description of evaluation metrics."""
-        return ('%22s' + '%11s' * 10) % ('Class', 'Images', 'Instances', 'Box(P', 'R', 'mAP50', 'mAP50-95)', 'Mask(P',
-                                         'R', 'mAP50', 'mAP50-95)')
+        return ('%11s' * 2 + '%15s' * 1 + '%20s' * 1 + '%13s' * 4 + '%20s' * 1 + '%13s' * 4) % (
+            'Class', 'Images', 'Instances', 'Box(P(IoU>0)', 'R(IoU>0)', 'mAP50', 'mAP50-95', 'mIoU)', 'Mask(P(IoU>0)',
+            'R(IoU>0)', 'mAP50', 'mAP50-95', 'mIoU)')
+
+    def print_results(self):
+        """Prints training/validation set metrics per class."""
+        pf = '%11s' * 2 + '%15i' * 1 + '%20.3g' * 1 + '%13.3g' * 4 + '%20.3g' * 1 + '%13.3g' * 4  # print format
+        LOGGER.info(pf % ('all', self.seen, self.nt_per_class.sum(), *self.metrics.mean_results()))
+        if self.nt_per_class.sum() == 0:
+            LOGGER.warning(
+                f'WARNING ⚠️ no labels found in {self.args.task} set, can not compute metrics without labels')
+
+        # Print results per class
+        if self.args.verbose and not self.training and self.nc > 1 and len(self.stats):
+            for i, c in enumerate(self.metrics.ap_class_index):
+                LOGGER.info(pf % (self.names[c], self.seen, self.nt_per_class[c], *self.metrics.class_result(i)))
+
+        if self.args.plots:
+            for normalize in True, False:
+                self.confusion_matrix.plot(save_dir=self.save_dir,
+                                           names=self.names.values(),
+                                           normalize=normalize,
+                                           on_plot=self.on_plot)
 
     def postprocess(self, preds):
         """Postprocesses YOLO predictions and returns output detections with proto."""
@@ -66,12 +93,14 @@ class SegmentationValidator(DetectionValidator):
             shape = batch['ori_shape'][si]
             correct_masks = torch.zeros(npr, self.niou, dtype=torch.bool, device=self.device)  # init
             correct_bboxes = torch.zeros(npr, self.niou, dtype=torch.bool, device=self.device)  # init
+            batch_box_iou = torch.tensor(0.0, device=self.device).reshape(1)  # init
+            batch_mask_iou = torch.tensor(0.0, device=self.device).reshape(1)  # init
             self.seen += 1
 
             if npr == 0:
                 if nl:
-                    self.stats.append((correct_bboxes, correct_masks, *torch.zeros(
-                        (2, 0), device=self.device), cls.squeeze(-1)))
+                    self.stats.append((correct_bboxes, correct_masks, batch_box_iou, batch_mask_iou,
+                                       *torch.zeros((2, 0), device=self.device), cls.squeeze(-1)))
                     if self.args.plots:
                         self.confusion_matrix.process_batch(detections=None, labels=cls.squeeze(-1))
                 continue
@@ -96,19 +125,22 @@ class SegmentationValidator(DetectionValidator):
                 ops.scale_boxes(batch['img'][si].shape[1:], tbox, shape,
                                 ratio_pad=batch['ratio_pad'][si])  # native-space labels
                 labelsn = torch.cat((cls, tbox), 1)  # native-space labels
-                correct_bboxes = self._process_batch(predn, labelsn)
+                # batch_iou is the average IoU of correct predictions for all classes in the current batch
+                batch_box_iou, correct_bboxes = self._process_batch(predn, labelsn)
                 # TODO: maybe remove these `self.` arguments as they already are member variable
-                correct_masks = self._process_batch(predn,
-                                                    labelsn,
-                                                    pred_masks,
-                                                    gt_masks,
-                                                    overlap=self.args.overlap_mask,
-                                                    masks=True)
+                # correct_masks: array[N, 10], for 10 IoU levels
+                batch_mask_iou, correct_masks = self._process_batch(predn,
+                                                                    labelsn,
+                                                                    pred_masks,
+                                                                    gt_masks,
+                                                                    overlap=self.args.overlap_mask,
+                                                                    masks=True)
                 if self.args.plots:
                     self.confusion_matrix.process_batch(predn, labelsn)
 
-            # Append correct_masks, correct_boxes, pconf, pcls, tcls
-            self.stats.append((correct_bboxes, correct_masks, pred[:, 4], pred[:, 5], cls.squeeze(-1)))
+            # Append correct_masks, correct_boxes, boxIoU, maskIoU, pconf, pcls, tcls
+            self.stats.append((correct_bboxes, correct_masks, batch_box_iou, batch_mask_iou,
+                               pred[:, 4], pred[:, 5], cls.squeeze(-1)))
 
             pred_masks = torch.as_tensor(pred_masks, dtype=torch.uint8)
             if self.args.plots and self.batch_i < 3:
@@ -146,12 +178,21 @@ class SegmentationValidator(DetectionValidator):
             if gt_masks.shape[1:] != pred_masks.shape[1:]:
                 gt_masks = F.interpolate(gt_masks[None], pred_masks.shape[1:], mode='bilinear', align_corners=False)[0]
                 gt_masks = gt_masks.gt_(0.5)
+            #  returns a tensor of shape (N, M) representing masks IoU.
             iou = mask_iou(gt_masks.view(gt_masks.shape[0], -1), pred_masks.view(pred_masks.shape[0], -1))
         else:  # boxes
+            # returns an NxM tensor containing the pairwise IoU values for every element in box1 and box2.
             iou = box_iou(labels[:, 1:], detections[:, :4])
 
         correct = np.zeros((detections.shape[0], self.iouv.shape[0])).astype(bool)
         correct_class = labels[:, 0:1] == detections[:, 5]
+        # calculate the average IoU for correction predictions in every batch
+        # https://github.com/ultralytics/ultralytics/issues/3456
+        # the shape of iou is (num_gt,num_pre), you should add iou.max(dim=1) to get the correct iou.
+        iou_correct = iou.clone()
+        torch.where(correct_class, iou_correct, 0.0)
+        max_elements, _ = torch.max(iou_correct, dim=1)
+        batch_iou = max_elements.mean().reshape(1)  # batch_iou is the average IoU of correct predictions for all classes in the current batch
         for i in range(len(self.iouv)):
             x = torch.where((iou >= self.iouv[i]) & correct_class)  # IoU > threshold and classes match
             if x[0].shape[0]:
@@ -163,7 +204,7 @@ class SegmentationValidator(DetectionValidator):
                     # matches = matches[matches[:, 2].argsort()[::-1]]
                     matches = matches[np.unique(matches[:, 0], return_index=True)[1]]
                 correct[matches[:, 1].astype(int), i] = True
-        return torch.tensor(correct, dtype=torch.bool, device=detections.device)
+        return batch_iou, torch.tensor(correct, dtype=torch.bool, device=detections.device)
 
     def plot_val_samples(self, batch, ni):
         """Plots validation samples with bounding box labels."""
@@ -244,19 +285,38 @@ class SegmentationValidator(DetectionValidator):
         return stats
 
 
-def val(cfg=DEFAULT_CFG, use_python=False):
+def val(opt, cfg=DEFAULT_CFG, use_python=False):
     """Validate trained YOLO model on validation data."""
     model = cfg.model or 'yolov8n-seg.pt'
     data = cfg.data or 'coco128-seg.yaml'
-
-    args = dict(model=model, data=data)
+    device = cfg.device if cfg.device is not None else ''
+    name = cfg.name
+    imgsz = cfg.imgsz
+    batch = cfg.batch
+    if opt:
+        data = opt.data
+        imgsz = opt.imgsz
+        model = opt.model
+        name = opt.name
+        split = opt.split
+        batch = opt.batch
+    args = dict(model=model, data=data, device=device, name=name, imgsz=imgsz, split=split, batch=batch)
     if use_python:
         from ultralytics import YOLO
         YOLO(model).val(**args)
     else:
-        validator = SegmentationValidator(args=args)
+        validator = SegmentationValidator(overrides=args)
         validator(model=args['model'])
 
 
 if __name__ == '__main__':
-    val()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--data', type=str, default='coco128-seg.yaml', help='path to data file, i.e. coco128.yaml')
+    parser.add_argument('--model', type=str, default='yolov8n-seg.pt', help='path to model file, i.e. yolov8n.pt, yolov8n.yaml')
+    parser.add_argument('--imgsz', type=int, default=320, help='inference size (pixels)')
+    parser.add_argument('--batch', type=int, default=16, help='number of images per batch (-1 for AutoBatch)')
+    parser.add_argument('--name', type=str, default="", help='results saved to \'project/name\' directory')
+    parser.add_argument('--split', type=str, default='test', help='dataset split to use for validation, i.e. \'val\', \'test\' or \'train\'')
+    opt = parser.parse_args()
+    print(opt)
+    val(opt, use_python=False)
