@@ -147,12 +147,9 @@ class BaseDataset(Dataset):
             if fn.exists():  # load npy
                 im = np.load(fn)
             else:  # read image
-                im = cv2.imread(f)  # BGR: 3-channel ALS images (red: SVF, green: OPEN POS, blue: SLOPE)
+                im = cv2.imread(f)  # BGR
                 if im is None:
                     raise FileNotFoundError(f'Image Not Found {f}')
-            # # convert 3-channel ALS images to each channel
-            # im[:, :, 0] = im[:, :, 2]
-            # im[:, :, 1] = im[:, :, 2]
             h0, w0 = im.shape[:2]  # orig hw
             r = self.imgsz / max(h0, w0)  # ratio
             if r != 1:  # if sizes are not equal
@@ -169,10 +166,6 @@ class BaseDataset(Dataset):
                     self.ims[j], self.im_hw0[j], self.im_hw[j] = None, None, None
 
             return im, (h0, w0), im.shape[:2]
-
-        # convert 3-channel ALS images to each channel
-        # self.ims[i][:, :, 0] = self.ims[i][:, :, 2]
-        # self.ims[i][:, :, 1] = self.ims[i][:, :, 2]
 
         return self.ims[i], self.im_hw0[i], self.im_hw[i]
 

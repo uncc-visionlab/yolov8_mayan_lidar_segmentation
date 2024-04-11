@@ -55,7 +55,7 @@ class BaseValidator:
         save_dir (Path): Directory to save results.
     """
 
-    def __init__(self, dataloader=None, save_dir=None, pbar=None, args=None, overrides=None, _callbacks=None):
+    def __init__(self, dataloader=None, save_dir=None, pbar=None, args=None, _callbacks=None):
         """
         Initializes a BaseValidator instance.
 
@@ -67,7 +67,7 @@ class BaseValidator:
         """
         self.dataloader = dataloader
         self.pbar = pbar
-        self.args = args or get_cfg(DEFAULT_CFG, overrides)
+        self.args = args or get_cfg(DEFAULT_CFG)
         self.model = None
         self.data = None
         self.device = None
@@ -89,8 +89,6 @@ class BaseValidator:
         self.callbacks = _callbacks or callbacks.get_default_callbacks()
 
     @smart_inference_mode()
-    # Python has a set of built-in methods and __call__ is one of them. The __call__ method enables Python programmers to write classes where
-    # the instances behave like functions and can be called like a function.
     def __call__(self, trainer=None, model=None):
         """
         Supports validation of a pre-trained model if passed or a model being trained

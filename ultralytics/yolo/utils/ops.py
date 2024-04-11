@@ -621,7 +621,7 @@ def process_mask_native(protos, masks_in, bboxes, shape):
       shape (tuple): the size of the input image (h,w)
 
     Returns:
-      masks (torch.Tensor): The returned masks with dimensions [n, h, w]
+      masks (torch.Tensor): The returned masks with dimensions [h, w, n]
     """
     c, mh, mw = protos.shape  # CHW
     masks = (masks_in @ protos.float().view(c, -1)).sigmoid().view(-1, mh, mw)

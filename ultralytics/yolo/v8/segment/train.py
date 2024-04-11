@@ -1,11 +1,6 @@
 # Ultralytics YOLO 🚀, AGPL-3.0 license
-import os
-import sys
 from copy import copy
 
-import argparse
-
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../../../'))
 from ultralytics.nn.tasks import SegmentationModel
 from ultralytics.yolo import v8
 from ultralytics.yolo.utils import DEFAULT_CFG, RANK
@@ -51,23 +46,13 @@ class SegmentationTrainer(v8.detect.DetectionTrainer):
         plot_results(file=self.csv, segment=True, on_plot=self.on_plot)  # save results.png
 
 
-def train(opt, cfg=DEFAULT_CFG, use_python=False):
+def train(cfg=DEFAULT_CFG, use_python=False):
     """Train a YOLO segmentation model based on passed arguments."""
     model = cfg.model or 'yolov8n-seg.pt'
     data = cfg.data or 'coco128-seg.yaml'  # or yolo.ClassificationDataset("mnist")
     device = cfg.device if cfg.device is not None else ''
-    name = cfg.name
-    imgsz = cfg.imgsz
-    batch = cfg.batch
-    epochs = cfg.epochs
-    if opt:
-        data = opt.data
-        imgsz = opt.imgsz
-        batch = opt.batch
-        epochs = opt.epochs
-        model = opt.model
-        name = opt.name
-    args = dict(model=model, data=data, device=device, name=name, imgsz=imgsz, batch=batch, epochs=epochs)
+
+    args = dict(model=model, data=data, device=device)
     if use_python:
         from ultralytics import YOLO
         YOLO(model).train(**args)
@@ -77,14 +62,4 @@ def train(opt, cfg=DEFAULT_CFG, use_python=False):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--data', type=str, default='coco128-seg.yaml', help='path to data file, i.e. coco128.yaml')
-    parser.add_argument('--model', type=str, default='yolov8n-seg.pt', help='path to model file, i.e. yolov8n.pt, yolov8n.yaml')
-    parser.add_argument('--imgsz', type=int, default=320, help='inference size (pixels)')
-    parser.add_argument('--workers', type=int, default=8, help='number of worker threads for data loading (per RANK if DDP)')
-    parser.add_argument('--epochs', type=int, default=250, help='number of epochs to train for')
-    parser.add_argument('--batch', type=int, default=256, help='number of images per batch (-1 for AutoBatch)')
-    parser.add_argument('--name', type=str, default="", help='results saved to \'project/name\' directory')
-    opt = parser.parse_args()
-    print(opt)
-    train(opt, use_python=False)
+    train()
