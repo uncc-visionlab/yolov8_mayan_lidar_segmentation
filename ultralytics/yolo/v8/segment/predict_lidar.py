@@ -193,7 +193,7 @@ def infer(model, imgsz, classes, conf):
         sys.exit("Exit: This code currently only supports to generate mask image for different classes separately.")
 
     home_folder = '/home/jzhang72/PycharmProjects/lidar-segmentation/'
-    results_folder = '/home/jzhang72/PycharmProjects/ultralytics/inference_results/'
+    results_folder = '/home/jzhang72/PycharmProjects/yolov8_mayan_lidar_segmentation/inference_results/'
     gis_output_image_filenames = ['yolo_KOM_image_segmented.png',
                                   'yolo_MLS_image_segmented.png',
                                   'yolo_SAY_image_segmented.png',
